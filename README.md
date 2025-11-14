@@ -16,10 +16,12 @@ Die KI verwendet Q-Learning mit einer ASCII-Visualisierung im Terminal.
 - Zustände sind relativ zur Position des Essens und des schlechten Blocks
 - Fortschritt wird in `snake_agent.pkl` gespeichert
 
+![Snake RL Icon](icon.png)
+
 ## 🛠️ Nutzung
 
 ```bash
 python snake_rl.py
 
 
-![Snake RL Icon](icon.png)
+
