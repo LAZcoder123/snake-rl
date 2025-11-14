@@ -136,12 +136,24 @@ def run_episode(env, agent, visualize=False, delay=0.1):
     state = env.reset()
     total_reward = 0.0
     done = False
+    steps = 0
+    start_time = time.time()
+    last_debug = start_time
+
     while not done:
         action = agent.select_action(state)
         next_state, reward, done = env.step(action)
         agent.update(state, action, reward, next_state, done)
         state = next_state
         total_reward += reward
+        steps += 1
+
+        # 👉 Zeitbasierte Debug-Meldung: alle 10 Sekunden
+        now = time.time()
+        if not visualize and now - last_debug >= 10:
+            print(f"Episode läuft noch... {steps} Schritte bisher, Dauer {int(now - start_time)}s")
+            last_debug = now
+
         if visualize:
             env.render()
             time.sleep(delay)
@@ -187,12 +199,17 @@ if __name__ == "__main__":
     env = SnakeGame()
     total_score_all = 0
 
+    LOG_INTERVAL = 100   # <--- HIER kannst du einstellen, wie oft Episoden geloggt werden
+
     for ep in range(1, episodes + 1):
         total_reward, score = run_episode(env, agent, visualize=visualize, delay=0.1)
         agent.decay_epsilon()
         total_score_all += score
-        if not visualize:
-            print(f"Episode {ep}/{episodes} | Score={score} | Reward={total_reward:.2f} | Epsilon={agent.epsilon:.3f} | GesamtScore={total_score_all}")
+
+        if not visualize and ep % LOG_INTERVAL == 0:
+            print(f"Episode {ep}/{episodes} | letzter Score={score} | GesamtScore={total_score_all} | Epsilon={agent.epsilon:.3f} | Zustände gelernt={len(agent.Q)}")
 
     save_agent(agent)
     print("Agent gespeichert in snake_agent.pkl")
+    print(f"GesamtScore nach {episodes} Episoden: {total_score_all}")
+    print(f"Gelernte Zustände: {len(agent.Q)}")
