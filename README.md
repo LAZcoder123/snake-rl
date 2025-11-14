@@ -22,4 +22,4 @@ Die KI verwendet Q-Learning mit einer ASCII-Visualisierung im Terminal.
 python snake_rl.py
 
 
-![Projekt-Icon](icon.png)
+![Snake RL Icon](icon.png)
