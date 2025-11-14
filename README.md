@@ -20,3 +20,6 @@ Die KI verwendet Q-Learning mit einer ASCII-Visualisierung im Terminal.
 
 ```bash
 python snake_rl.py
+
+
+![Projekt-Icon](icon.png)
