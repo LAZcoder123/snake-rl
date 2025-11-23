@@ -1,11 +1,27 @@
 import os
+import sys
 import random
 import time
 import pickle
 from collections import defaultdict
 
+# Grid und Aktionen
 WIDTH, HEIGHT = 10, 10
 ACTIONS = ["UP", "DOWN", "LEFT", "RIGHT"]
+
+# Speicherpfad: immer im gleichen Ordner wie snake_rl.py
+BASE_DIR = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else os.getcwd()
+SAVE_PATH = os.path.join(BASE_DIR, "snake_agent.pkl")
+
+# Logging/Debug-Parameter
+LOG_INTERVAL = 100          # Episoden-Zusammenfassung alle X Episoden
+DEBUG_INTERVAL_STEPS = 1000 # Live-Ticker: Ausgabe alle X Schritte innerhalb einer Episode
+DEBUG_INTERVAL_SECS = 5     # Live-Ticker: Ausgabe alle Y Sekunden innerhalb einer Episode
+MAX_STEPS = 20000           # Harte Obergrenze pro Episode
+
+def safe_print(msg):
+    print(msg)
+    sys.stdout.flush()
 
 class SnakeGame:
     def __init__(self, width=WIDTH, height=HEIGHT):
@@ -26,7 +42,12 @@ class SnakeGame:
         else:
             exclude = set(exclude)
         exclude = exclude.union(set(self.snake))
+        # Robust: falls das Grid voll wäre, brich nach vielen Versuchen ab
+        attempts = 0
         while True:
+            attempts += 1
+            if attempts > self.width * self.height * 4:
+                return (0, 0)
             cell = (random.randint(0, self.width - 1), random.randint(0, self.height - 1))
             if cell not in exclude:
                 return cell
@@ -53,11 +74,11 @@ class SnakeGame:
 
         new_head = (head_x, head_y)
 
-        # Rand
+        # Randkollision
         if head_x < 0 or head_x >= self.width or head_y < 0 or head_y >= self.height:
             return self.get_state(), -1.0, True
 
-        # schlechter Block
+        # Schlechter Block
         if new_head == self.bad_block:
             return self.get_state(), -1.0, True
 
@@ -132,15 +153,16 @@ class QLearningAgent:
         if self.epsilon > self.epsilon_min:
             self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
 
-def run_episode(env, agent, visualize=False, delay=0.1):
+def run_episode(env, agent, visualize=False, delay=0.05):
     state = env.reset()
     total_reward = 0.0
     done = False
     steps = 0
-    start_time = time.time()
-    last_debug = start_time
+    last_time_debug = time.time()
 
-    while not done:
+    safe_print("Episode gestartet...")
+
+    while not done and steps < MAX_STEPS:
         action = agent.select_action(state)
         next_state, reward, done = env.step(action)
         agent.update(state, action, reward, next_state, done)
@@ -148,18 +170,27 @@ def run_episode(env, agent, visualize=False, delay=0.1):
         total_reward += reward
         steps += 1
 
-        # 👉 Zeitbasierte Debug-Meldung: alle 10 Sekunden
+        # Schrittbasierter Live-Ticker
+        if not visualize and steps % DEBUG_INTERVAL_STEPS == 0:
+            safe_print(f"Episode läuft noch... {steps} Schritte bisher")
+
+        # Zeitbasierter Live-Ticker
         now = time.time()
-        if not visualize and now - last_debug >= 10:
-            print(f"Episode läuft noch... {steps} Schritte bisher, Dauer {int(now - start_time)}s")
-            last_debug = now
+        if not visualize and now - last_time_debug >= DEBUG_INTERVAL_SECS:
+            safe_print(f"Episode läuft noch... {steps} Schritte, {int(now - last_time_debug)}s seit letzter Meldung")
+            last_time_debug = now
 
         if visualize:
             env.render()
             time.sleep(delay)
-    return total_reward, env.score
 
-def save_agent(agent, path="snake_agent.pkl"):
+    if steps >= MAX_STEPS and not done:
+        safe_print(f"Episode abgebrochen nach MAX_STEPS={MAX_STEPS}.")
+        done = True
+
+    return total_reward, env.score, steps
+
+def save_agent(agent, path=SAVE_PATH):
     data = {
         "Q": dict(agent.Q),
         "alpha": agent.alpha,
@@ -172,44 +203,75 @@ def save_agent(agent, path="snake_agent.pkl"):
     with open(path, "wb") as f:
         pickle.dump(data, f)
 
-def load_agent(path="snake_agent.pkl"):
+def load_agent(path=SAVE_PATH):
     if not os.path.exists(path) or os.path.getsize(path) == 0:
+        safe_print("Kein bestehender Agent gefunden. Starte neu.")
         return QLearningAgent(ACTIONS)
     with open(path, "rb") as f:
         data = pickle.load(f)
     agent = QLearningAgent(
-        actions=data["actions"],
-        alpha=data["alpha"],
-        gamma=data["gamma"],
-        epsilon=data["epsilon"],
-        epsilon_min=data["epsilon_min"],
-        epsilon_decay=data["epsilon_decay"]
+        actions=data.get("actions", ACTIONS),
+        alpha=data.get("alpha", 0.2),
+        gamma=data.get("gamma", 0.95),
+        epsilon=data.get("epsilon", 1.0),
+        epsilon_min=data.get("epsilon_min", 0.05),
+        epsilon_decay=data.get("epsilon_decay", 0.995)
     )
     agent.Q = defaultdict(lambda: {a: 0.0 for a in agent.actions})
-    for state, qvals in data["Q"].items():
+    for state, qvals in data.get("Q", {}).items():
         agent.Q[state] = qvals
+    safe_print(f"Agent geladen aus: {path}")
     return agent
 
-if __name__ == "__main__":
-    episodes = int(input("Wie viele Simulationen? "))
-    vis_choice = input("Visualisierung? (J/N) ").strip().upper()
+def main():
+    safe_print("Snake RL startet... Bitte Eingaben machen:")
+    try:
+        raw = input("Wie viele Simulationen? (Enter=100) ").strip()
+        episodes = int(raw) if raw else 100
+    except Exception:
+        episodes = 100
+        safe_print("Hinweis: Ungültige Eingabe, setze Episoden=100.")
+
+    vis_choice = input("Visualisierung? (J/N, Enter=N) ").strip().upper()
     visualize = (vis_choice == "J")
 
-    agent = load_agent("snake_agent.pkl")
+    if visualize:
+        safe_print("Visualisierung aktiv. Konsole wird regelmäßig neu gezeichnet.")
+
+    agent = load_agent(SAVE_PATH)
     env = SnakeGame()
     total_score_all = 0
+    total_steps_all = 0
+    start_time_all = time.time()
 
-    LOG_INTERVAL = 100   # <--- HIER kannst du einstellen, wie oft Episoden geloggt werden
+    try:
+        for ep in range(1, episodes + 1):
+            safe_print(f"Starte Episode {ep}/{episodes} ...")
+            total_reward, score, steps = run_episode(env, agent, visualize=visualize, delay=0.05)
+            agent.decay_epsilon()
+            total_score_all += score
+            total_steps_all += steps
 
-    for ep in range(1, episodes + 1):
-        total_reward, score = run_episode(env, agent, visualize=visualize, delay=0.1)
-        agent.decay_epsilon()
-        total_score_all += score
+            if not visualize and ep % LOG_INTERVAL == 0:
+                safe_print(
+                    f"Episode {ep}/{episodes} | letzter Score={score} | GesamtScore={total_score_all} "
+                    f"| Schritte in Episode={steps} | GesamtSchritte={total_steps_all} "
+                    f"| Epsilon={agent.epsilon:.3f} | Zustände gelernt={len(agent.Q)}"
+                )
 
-        if not visualize and ep % LOG_INTERVAL == 0:
-            print(f"Episode {ep}/{episodes} | letzter Score={score} | GesamtScore={total_score_all} | Epsilon={agent.epsilon:.3f} | Zustände gelernt={len(agent.Q)}")
+    except KeyboardInterrupt:
+        safe_print("\nAbgebrochen. Speichere aktuellen Agent-Stand...")
+        save_agent(agent, SAVE_PATH)
+        safe_print(f"Agent gespeichert in: {SAVE_PATH}")
+        return
 
-    save_agent(agent)
-    print("Agent gespeichert in snake_agent.pkl")
-    print(f"GesamtScore nach {episodes} Episoden: {total_score_all}")
-    print(f"Gelernte Zustände: {len(agent.Q)}")
+    # Abschluss nach allen Episoden
+    save_agent(agent, SAVE_PATH)
+    elapsed = time.time() - start_time_all
+    safe_print(f"Agent gespeichert in: {SAVE_PATH}")
+    safe_print(f"GesamtScore nach {episodes} Episoden: {total_score_all}")
+    safe_print(f"GesamtSchritte: {total_steps_all} | Dauer gesamt: {int(elapsed)}s")
+    safe_print(f"Gelernte Zustände: {len(agent.Q)}")
+
+if __name__ == "__main__":
+    main()
